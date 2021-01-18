@@ -5,8 +5,15 @@ phases:
       docker: 18
   pre_build:
     commands:
+      - echo Fetching ECR Login...
+      - ECR_LOGIN=$(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+      - PASSWORD=$(echo $ECR_LOGIN | cut -d' ' -f6)
       - echo Logging in to Amazon ECR...
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - $ECR_LOGIN
+      - REPO_NGINX_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NGINX_NAME"
+      - REPO_API_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_API_NAME"
+      - REPO_CLIENT_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_CLIENT_NAME"
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
   build:
     commands:
       # Test Build (Dockerfile.dev)
@@ -19,9 +26,11 @@ phases:
       - docker-compose --file=docker-compose-prod.yml build
   post_build:
     commands:
+      - bash -c "if [ /"$CODEBUILD_BUILD_SUCCEEDING/" == /"0/" ]; then exit 1; fi"
       - echo Build completed on `date`
-      - echo Pushing the Docker image...
+      - echo Pushing the Docker image to ECR...
       - docker-compose --file=docker-compose-prod.yml push
+      - echo Writing image definitions file...
+      - printf '[{"name":"test-nginx","imageUri":"%s"},{"name":"test-api","imageUri":"%s"},{"name":"test-client","imageUri":"%s"}]' $REPO_NGINX_URI:$IMAGE_TAG $REPO_API_URI::$IMAGE_TAG $REPO_CLIENT_URI::$IMAGE_TAG > imagedefinitions.json
 artifacts:
-  files:
-    - 'Dockerrun.aws.json'
+    files: imagedefinitions.json
